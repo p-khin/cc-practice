@@ -1,1 +1,1 @@
-# cc-practice 
+# Claude Code 研修ワークスペース
