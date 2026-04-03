@@ -17,7 +17,8 @@ for id in $top_ids; do
     id: .id,
     title: .title,
     url: (.url // ("https://news.ycombinator.com/item?id=" + (.id | tostring))),
-    score: .score
+    score: .score,
+    comments: (.descendants // 0)
   }')
 
   items=$(echo "$items" | jq --argjson entry "$entry" '. + [$entry]')
