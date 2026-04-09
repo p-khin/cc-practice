@@ -190,6 +190,133 @@ else
   ng "exits non-zero when hn-top10.sh fails"
 fi
 
+# ── news-summary.sh ────────────────────────────────────────────────────────
+printf "\n=== news-summary.sh ===\n"
+
+# Mock curl for news-summary.sh: handles HN, Reddit, Lobsters, Dev.to
+NS_MOCK_DIR="$(mktemp -d)"
+trap 'rm -rf "$NS_MOCK_DIR"' EXIT
+
+cat > "$NS_MOCK_DIR/sleep" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "$NS_MOCK_DIR/sleep"
+
+cat > "$NS_MOCK_DIR/curl" <<'EOF'
+#!/bin/bash
+# Extract URL: the only arg starting with http
+URL=""
+for arg in "$@"; do
+  [[ "$arg" == http* ]] && URL="$arg"
+done
+
+if [[ "$URL" == *"topstories.json"* ]]; then
+  echo '[1,2,3,4,5,6,7,8,9,10,11,12]'
+elif [[ "$URL" =~ /item/([0-9]+)\.json ]]; then
+  ID="${BASH_REMATCH[1]}"
+  echo "{\"id\":$ID,\"title\":\"HN Article $ID\",\"url\":\"https://example.com/hn/$ID\",\"score\":$((ID*10)),\"descendants\":$((ID*2))}"
+elif [[ "$URL" == *"reddit.com"* ]]; then
+  items=""
+  for i in $(seq 1 10); do
+    [[ -n "$items" ]] && items="$items,"
+    items="${items}{\"kind\":\"t3\",\"data\":{\"title\":\"Reddit Article $i\",\"url\":\"https://example.com/r/$i\",\"score\":$((i*5)),\"num_comments\":$i}}"
+  done
+  echo "{\"data\":{\"children\":[$items]}}"
+elif [[ "$URL" == *"lobste.rs"* ]]; then
+  items=""
+  for i in $(seq 1 10); do
+    [[ -n "$items" ]] && items="$items,"
+    items="${items}{\"title\":\"Lobsters Article $i\",\"url\":\"https://example.com/l/$i\",\"score\":$((i*3)),\"comment_count\":$i}"
+  done
+  echo "[$items]"
+elif [[ "$URL" == *"dev.to"* ]]; then
+  items=""
+  for i in $(seq 1 10); do
+    [[ -n "$items" ]] && items="$items,"
+    items="${items}{\"title\":\"DevTo Article $i\",\"url\":\"https://dev.to/article-$i\",\"public_reactions_count\":$((i*2)),\"comments_count\":$i}"
+  done
+  echo "[$items]"
+fi
+EOF
+chmod +x "$NS_MOCK_DIR/curl"
+
+NS_MOCK_PATH="$NS_MOCK_DIR:$ORIG_PATH"
+
+# Helper: run news-summary.sh with mock curl and given --sources
+run_ns() {
+  env PATH="$NS_MOCK_PATH" bash ./news-summary.sh --sources "$1" 2>/dev/null
+}
+
+# Test each adapter individually
+for src in hn reddit lobsters devto; do
+  OUTPUT=$(run_ns "$src")
+
+  if echo "$OUTPUT" | jq . > /dev/null 2>&1; then
+    ok "$src: output is valid JSON"
+  else
+    ng "$src: output is valid JSON"
+  fi
+
+  COUNT=$(echo "$OUTPUT" | jq 'length')
+  if [[ "$COUNT" -eq 10 ]]; then
+    ok "$src: output has 10 items"
+  else
+    ng "$src: output has 10 items (got $COUNT)"
+  fi
+
+  MISSING=$(echo "$OUTPUT" | jq '[.[] | select(
+    .title == null or .score == null or .url == null or
+    .source == null or .comments == null or .normalized_score == null
+  )] | length')
+  if [[ "$MISSING" -eq 0 ]]; then
+    ok "$src: all items have required fields"
+  else
+    ng "$src: all items have required fields ($MISSING missing)"
+  fi
+
+  CORRECT_SRC=$(echo "$OUTPUT" | jq --arg s "$src" '[.[] | select(.source == $s)] | length')
+  if [[ "$CORRECT_SRC" -eq 10 ]]; then
+    ok "$src: source field is '$src'"
+  else
+    ng "$src: source field is '$src' (got $CORRECT_SRC items with correct source)"
+  fi
+done
+
+# Test unified output with multiple sources
+MULTI=$(run_ns "reddit,lobsters")
+MULTI_COUNT=$(echo "$MULTI" | jq 'length')
+if [[ "$MULTI_COUNT" -eq 20 ]]; then
+  ok "--sources reddit,lobsters: combined output has 20 items"
+else
+  ng "--sources reddit,lobsters: combined output has 20 items (got $MULTI_COUNT)"
+fi
+
+# Test normalized_score is 0-100
+MAX_SCORE=$(echo "$MULTI" | jq '[.[].normalized_score] | max')
+MIN_SCORE=$(echo "$MULTI" | jq '[.[].normalized_score] | min')
+if [[ "$MAX_SCORE" -eq 100 && "$MIN_SCORE" -ge 0 ]]; then
+  ok "normalized_score range is 0-100"
+else
+  ng "normalized_score range is 0-100 (max=$MAX_SCORE min=$MIN_SCORE)"
+fi
+
+# Test sorted by normalized_score descending (first >= last)
+FIRST=$(echo "$MULTI" | jq '.[0].normalized_score')
+LAST=$(echo "$MULTI" | jq '.[-1].normalized_score')
+if [[ "$FIRST" -ge "$LAST" ]]; then
+  ok "output is sorted by normalized_score descending"
+else
+  ng "output is sorted by normalized_score descending (first=$FIRST last=$LAST)"
+fi
+
+# Test unknown source exits non-zero
+if ! run_ns "unknown" 2>/dev/null; then
+  ok "unknown source exits non-zero"
+else
+  ng "unknown source exits non-zero"
+fi
+
 # ── result ─────────────────────────────────────────────────────────────────
 printf "\n──────────────────────────────\n"
 printf "  Tests: %d  Pass: \033[32m%d\033[0m  Fail: \033[31m%d\033[0m\n" \
