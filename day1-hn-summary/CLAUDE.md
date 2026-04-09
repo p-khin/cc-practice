@@ -40,3 +40,19 @@ hn-top10.sh  →  JSON array (rank/id/title/url/score)  →  hn-summary.sh  → 
 - All scripts use `set -euo pipefail`.
 - Output language: Japanese. Output format: Markdown.
 - Dependencies: `curl`, `jq`, `shellcheck`, `claude` (Claude Code CLI).
+
+## Prompt Evaluation
+
+Last run: 2026-04-09
+
+| Prompt | Information | Accuracy | Readability | Total |
+|--------|-------------|----------|-------------|-------|
+| A | 4 | 4 | 5 | 13 ← best |
+| B | 4 | 4 | 5 | 13 |
+| C | 4 | 4 | 5 | 13 |
+
+**Best prompt: A**
+
+```
+要約して
+```
