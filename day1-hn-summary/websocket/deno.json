@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "@hono/hono": "jsr:@hono/hono@^4"
+  },
+  "tasks": {
+    "start": "deno run --allow-net --allow-read=./client.html server.ts"
+  }
+}

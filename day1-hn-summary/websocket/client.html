@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HN Live Feed</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f6ef;
+      color: #333;
+      min-height: 100vh;
+    }
+
+    /* ── header ── */
+    header {
+      background: #ff6600;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      box-shadow: 0 2px 6px rgba(0,0,0,.15);
+    }
+    header h1 { color: #fff; font-size: 17px; font-weight: 700; flex: 1; }
+
+    #status {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 99px;
+      white-space: nowrap;
+      transition: background .3s;
+    }
+    #status.connecting  { background: #f0a500; color: #fff; }
+    #status.connected   { background: #27ae60; color: #fff; }
+    #status.disconnected { background: #c0392b; color: #fff; }
+
+    /* ── main ── */
+    main { max-width: 760px; margin: 0 auto; padding: 20px 16px; }
+
+    #meta {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 14px;
+      height: 16px;
+    }
+
+    /* ── article card ── */
+    #feed { list-style: none; }
+
+    .article {
+      background: #fff;
+      border-radius: 6px;
+      padding: 13px 16px;
+      margin-bottom: 8px;
+      border-left: 3px solid #ff6600;
+      animation: slideIn .25s ease;
+      transition: border-color .4s;
+    }
+    .article.new { border-left-color: #27ae60; }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    .article-title { font-size: 14px; font-weight: 600; margin-bottom: 6px; line-height: 1.4; }
+    .article-title a { color: #000; text-decoration: none; }
+    .article-title a:hover { text-decoration: underline; }
+
+    .article-meta { font-size: 12px; color: #888; display: flex; flex-wrap: wrap; gap: 10px; }
+    .score { color: #ff6600; font-weight: 700; }
+    .article-meta a { color: #888; }
+    .article-meta a:hover { color: #ff6600; }
+
+    .badge-new {
+      display: inline-block;
+      background: #27ae60;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 99px;
+      margin-left: 6px;
+      vertical-align: middle;
+      animation: fadeOut 4s forwards;
+    }
+    @keyframes fadeOut { 0%,70% { opacity:1; } 100% { opacity:0; } }
+
+    .empty { color: #aaa; text-align: center; padding: 48px 0; font-style: italic; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>📰 HN Live Feed</h1>
+  <span id="status" class="connecting">Connecting…</span>
+</header>
+
+<main>
+  <p id="meta"></p>
+  <ul id="feed">
+    <li class="empty" id="placeholder">Connecting to server…</li>
+  </ul>
+</main>
+
+<script>
+  const statusEl  = document.getElementById('status');
+  const feedEl    = document.getElementById('feed');
+  const metaEl    = document.getElementById('meta');
+  const seenIds   = new Set();
+  let reconnectDelay = 1000;
+  let ws;
+
+  // ── status helpers ──────────────────────────────────────────────────────
+  function setStatus(cls, text) {
+    statusEl.className = cls;
+    statusEl.textContent = text;
+  }
+
+  function updateMeta() {
+    metaEl.textContent = seenIds.size
+      ? `${seenIds.size} article${seenIds.size !== 1 ? 's' : ''} tracked`
+      : '';
+  }
+
+  // ── HTML escaping ───────────────────────────────────────────────────────
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // ── render article ──────────────────────────────────────────────────────
+  function addArticle(article, isNew) {
+    if (seenIds.has(article.id)) return;
+    seenIds.add(article.id);
+
+    const placeholder = document.getElementById('placeholder');
+    if (placeholder) placeholder.remove();
+
+    const when = article.timestamp
+      ? new Date(article.timestamp).toLocaleTimeString()
+      : '';
+    const hnUrl = `https://news.ycombinator.com/item?id=${article.id}`;
+    const newBadge = isNew ? '<span class="badge-new">NEW</span>' : '';
+
+    const li = document.createElement('li');
+    li.className = 'article' + (isNew ? ' new' : '');
+    li.id = `a-${article.id}`;
+    li.innerHTML = `
+      <div class="article-title">
+        <a href="${esc(article.url)}" target="_blank" rel="noopener">${esc(article.title)}</a>${newBadge}
+      </div>
+      <div class="article-meta">
+        <span class="score">▲ ${article.score}</span>
+        <span>💬 ${article.comments}</span>
+        <a href="${esc(hnUrl)}" target="_blank" rel="noopener">discuss</a>
+        ${when ? `<span>${when}</span>` : ''}
+      </div>`;
+
+    // New articles go to top; snapshot articles append in order
+    if (isNew) {
+      feedEl.prepend(li);
+    } else {
+      feedEl.append(li);
+    }
+
+    updateMeta();
+  }
+
+  // ── WebSocket ───────────────────────────────────────────────────────────
+  function connect() {
+    setStatus('connecting', 'Connecting…');
+
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+    ws.onopen = () => {
+      setStatus('connected', 'Connected');
+      reconnectDelay = 1000;
+    };
+
+    ws.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+
+      if (msg.type === 'snapshot') {
+        msg.articles.forEach(a => addArticle(a, false));
+      } else if (msg.type === 'new_article') {
+        addArticle(msg.article, true);
+      }
+    };
+
+    ws.onclose = () => {
+      setStatus('disconnected', `Reconnecting in ${reconnectDelay / 1000}s…`);
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
+    };
+
+    ws.onerror = () => ws.close();
+  }
+
+  connect();
+</script>
+</body>
+</html>
