@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-${{ runner.os }}-jq-shellcheck
+          restore-keys: |
+            apt-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y jq shellcheck
+
+      - name: Run shellcheck
+        run: |
+          shellcheck day1-hn-summary/*.sh
+
+      - name: Run tests
+        run: |
+          cd day1-hn-summary
+          ./test.sh
+
+      - name: Notify Slack on failure
+        if: failure() && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -s -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"text\": \":x: CI failed on *${{ github.repository }}*\",
+              \"attachments\": [{
+                \"color\": \"danger\",
+                \"fields\": [
+                  {\"title\": \"Branch\", \"value\": \"${{ github.ref_name }}\", \"short\": true},
+                  {\"title\": \"Commit\", \"value\": \"<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${GITHUB_SHA::7}>\", \"short\": true},
+                  {\"title\": \"Triggered by\", \"value\": \"${{ github.actor }}\", \"short\": true},
+                  {\"title\": \"Run\", \"value\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View logs>\", \"short\": true}
+                ]
+              }]
+            }"
