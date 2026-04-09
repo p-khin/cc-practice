@@ -317,6 +317,174 @@ else
   ng "unknown source exits non-zero"
 fi
 
+# ── hn-history.sh ──────────────────────────────────────────────────────────
+printf "\n=== hn-history.sh ===\n"
+
+if ! command -v sqlite3 >/dev/null 2>&1; then
+  printf "  \033[33mSKIP\033[0m all hn-history.sh tests (sqlite3 not installed)\n"
+else
+
+HH_WORK="$(mktemp -d)"
+HH_DB="$HH_WORK/test.db"
+
+cp ./hn-history.sh "$HH_WORK/"
+
+# Mock hn-top10.sh — dataset 1: articles 1001-1010
+cat > "$HH_WORK/hn-top10.sh" <<'EOF'
+#!/bin/bash
+echo '[
+  {"rank":1,"id":1001,"title":"AI Research Breakthrough","url":"https://example.com/1001","score":500,"comments":80},
+  {"rank":2,"id":1002,"title":"Rust Systems Programming","url":"https://example.com/1002","score":400,"comments":60},
+  {"rank":3,"id":1003,"title":"Web Security Vulnerability","url":"https://example.com/1003","score":300,"comments":50},
+  {"rank":4,"id":1004,"title":"Machine Learning Model","url":"https://example.com/1004","score":250,"comments":40},
+  {"rank":5,"id":1005,"title":"JavaScript Framework Update","url":"https://example.com/1005","score":200,"comments":35},
+  {"rank":6,"id":1006,"title":"Linux Kernel Release","url":"https://example.com/1006","score":180,"comments":30},
+  {"rank":7,"id":1007,"title":"Startup Funding Round","url":"https://example.com/1007","score":150,"comments":25},
+  {"rank":8,"id":1008,"title":"Database Performance","url":"https://example.com/1008","score":120,"comments":20},
+  {"rank":9,"id":1009,"title":"Cloud Computing News","url":"https://example.com/1009","score":100,"comments":15},
+  {"rank":10,"id":1010,"title":"Open Source Project","url":"https://example.com/1010","score":80,"comments":10}
+]'
+EOF
+chmod +x "$HH_WORK/hn-top10.sh"
+
+run_hh() {
+  (cd "$HH_WORK" && env HN_HISTORY_DB="$HH_DB" bash ./hn-history.sh "$@" 2>/dev/null)
+}
+
+# --- Run 1: basic insert ---
+run_hh
+
+# Test: DB file created
+if [[ -f "$HH_DB" ]]; then
+  ok "database file is created"
+else
+  ng "database file is created"
+fi
+
+# Test: tables exist
+if sqlite3 "$HH_DB" ".tables" | grep -q "articles"; then
+  ok "articles table exists"
+else
+  ng "articles table exists"
+fi
+if sqlite3 "$HH_DB" ".tables" | grep -q "runs"; then
+  ok "runs table exists"
+else
+  ng "runs table exists"
+fi
+
+# Test: 10 articles inserted
+HH_COUNT=$(sqlite3 "$HH_DB" "SELECT COUNT(*) FROM articles;")
+if [[ "$HH_COUNT" -eq 10 ]]; then
+  ok "10 articles inserted after first run"
+else
+  ng "10 articles inserted after first run (got $HH_COUNT)"
+fi
+
+# Test: 1 run recorded
+HH_RUNS=$(sqlite3 "$HH_DB" "SELECT COUNT(*) FROM runs;")
+if [[ "$HH_RUNS" -eq 1 ]]; then
+  ok "1 run recorded"
+else
+  ng "1 run recorded (got $HH_RUNS)"
+fi
+
+# --- 7-day cleanup test ---
+# Insert an article with fetched_at 8 days ago
+HH_OLD_RUN=$(sqlite3 "$HH_DB" \
+  "INSERT INTO runs (fetched_at) VALUES (datetime('now', '-8 days')); SELECT last_insert_rowid();")
+sqlite3 "$HH_DB" \
+  "INSERT INTO articles (run_id,hn_id,title,score,url,source,fetched_at)
+   VALUES ($HH_OLD_RUN,9999,'Old Article',50,'https://old.com','hn',datetime('now','-8 days'));"
+
+run_hh  # Run 2: fetches + triggers cleanup
+
+HH_OLD_COUNT=$(sqlite3 "$HH_DB" "SELECT COUNT(*) FROM articles WHERE hn_id = 9999;")
+if [[ "$HH_OLD_COUNT" -eq 0 ]]; then
+  ok "articles older than 7 days are cleaned up"
+else
+  ng "articles older than 7 days are cleaned up (count=$HH_OLD_COUNT)"
+fi
+
+# --- Diff test ---
+# Switch mock to dataset 2: 1001-1009 + 1011 (1010 removed, 1011 added)
+cat > "$HH_WORK/hn-top10.sh" <<'EOF'
+#!/bin/bash
+echo '[
+  {"rank":1,"id":1001,"title":"AI Research Breakthrough","url":"https://example.com/1001","score":500,"comments":80},
+  {"rank":2,"id":1002,"title":"Rust Systems Programming","url":"https://example.com/1002","score":400,"comments":60},
+  {"rank":3,"id":1003,"title":"Web Security Vulnerability","url":"https://example.com/1003","score":300,"comments":50},
+  {"rank":4,"id":1004,"title":"Machine Learning Model","url":"https://example.com/1004","score":250,"comments":40},
+  {"rank":5,"id":1005,"title":"JavaScript Framework Update","url":"https://example.com/1005","score":200,"comments":35},
+  {"rank":6,"id":1006,"title":"Linux Kernel Release","url":"https://example.com/1006","score":180,"comments":30},
+  {"rank":7,"id":1007,"title":"Startup Funding Round","url":"https://example.com/1007","score":150,"comments":25},
+  {"rank":8,"id":1008,"title":"Database Performance","url":"https://example.com/1008","score":120,"comments":20},
+  {"rank":9,"id":1009,"title":"Cloud Computing News","url":"https://example.com/1009","score":100,"comments":15},
+  {"rank":10,"id":1011,"title":"Brand New Article","url":"https://example.com/1011","score":90,"comments":5}
+]'
+EOF
+chmod +x "$HH_WORK/hn-top10.sh"
+
+DIFF_OUT=$(run_hh --diff)
+
+if echo "$DIFF_OUT" | grep -q "Brand New Article"; then
+  ok "--diff shows new articles"
+else
+  ng "--diff shows new articles"
+fi
+
+if echo "$DIFF_OUT" | grep -q "Open Source Project"; then
+  ok "--diff shows removed articles"
+else
+  ng "--diff shows removed articles"
+fi
+
+# --- --stats test ---
+STATS_OUT=$(run_hh --stats)
+
+if echo "$STATS_OUT" | grep -q "Total runs"; then
+  ok "--stats shows total runs"
+else
+  ng "--stats shows total runs"
+fi
+
+if echo "$STATS_OUT" | grep -q "Total articles"; then
+  ok "--stats shows total articles"
+else
+  ng "--stats shows total articles"
+fi
+
+if echo "$STATS_OUT" | grep -q "Average score"; then
+  ok "--stats shows average score"
+else
+  ng "--stats shows average score"
+fi
+
+# --- --trend test ---
+TREND_OUT=$(run_hh --trend)
+
+if echo "$TREND_OUT" | grep -q "Run #"; then
+  ok "--trend shows runs"
+else
+  ng "--trend shows runs"
+fi
+
+if echo "$TREND_OUT" | grep -qE "AI/ML|Systems|Security|Web|Business|Other"; then
+  ok "--trend shows categories"
+else
+  ng "--trend shows categories"
+fi
+
+# --- unknown option ---
+if ! run_hh --unknown 2>/dev/null; then
+  ok "unknown option exits non-zero"
+else
+  ng "unknown option exits non-zero"
+fi
+
+rm -rf "$HH_WORK"
+fi  # end sqlite3 check
+
 # ── result ─────────────────────────────────────────────────────────────────
 printf "\n──────────────────────────────\n"
 printf "  Tests: %d  Pass: \033[32m%d\033[0m  Fail: \033[31m%d\033[0m\n" \

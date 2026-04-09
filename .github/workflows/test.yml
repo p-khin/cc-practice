@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y jq shellcheck
+          sudo apt-get install -y jq shellcheck sqlite3
 
       - name: Run shellcheck
         run: |
