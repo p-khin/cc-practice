@@ -1,0 +1,11 @@
+{
+  "imports": {
+    "zod": "npm:zod@3"
+  },
+  "tasks": {
+    "top10":   "deno run --allow-net hn-top10.ts",
+    "summary": "deno run --allow-net --allow-run=claude mod.ts",
+    "start":   "deno run --allow-net --allow-run=claude mod.ts",
+    "test":    "deno test --allow-net tests/"
+  }
+}
