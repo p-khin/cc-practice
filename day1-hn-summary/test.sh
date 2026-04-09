@@ -1,5 +1,7 @@
 #!/bin/bash
 
+exit 1  # temporary: trigger CI failure for notification test
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
