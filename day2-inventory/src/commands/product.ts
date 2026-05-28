@@ -12,7 +12,7 @@ export function buildProductCommand(db: Client): Command {
     .requiredOption('--sku <sku>')
     .requiredOption('--name <name>')
     .requiredOption('--price <price>', '販売単価', parseFloat)
-    .requiredOption('--cost <cost>', '仕入原価', parseFloat)
+    .option('--cost <cost>', '仕入原価', parseFloat)
     .option('--desc <description>')
     .option('--reorder <point>', '発注点', parseInt)
     .action(async (opts) => {
